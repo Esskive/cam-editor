@@ -50,6 +50,10 @@ const CamProfileGraph: React.FC<CamProfileGraphProps> = ({
   // Calculate min and max values for the profile
   const minX = camProfile?.segments[0]?.x1 || 0;
   const maxX = camProfile?.segments[camProfile.segments.length - 1]?.x2 || 360;
+  
+  // Ajouter une marge au domaine X pour s'assurer que tous les points sont visibles
+  const xDomainMin = minX;
+  const xDomainMax = maxX + (maxX - minX) * 0.05; // Ajouter 5% de marge à droite
 
   // Calculer les domaines pour chaque axe Y
   const calculateDomains = () => {
@@ -120,10 +124,31 @@ const CamProfileGraph: React.FC<CamProfileGraphProps> = ({
     .filter((value, index, self) => self.indexOf(value) === index)
     .sort((a, b) => a - b) || [];
 
+  // Extraire toutes les valeurs Y importantes (Y1, Y2) pour les graduations de l'axe Y
   const transitionYValues = showPosition ? (camProfile?.segments
     .flatMap(segment => [segment.y1, segment.y2])
     .filter((value, index, self) => self.indexOf(value) === index)
     .sort((a, b) => a - b) || []) : [];
+
+  // Ajouter des valeurs intermédiaires pour l'axe Y si nécessaire
+  const enhancedYValues = [...transitionYValues];
+  if (transitionYValues.length > 0) {
+    const minY = Math.min(...transitionYValues);
+    const maxY = Math.max(...transitionYValues);
+    
+    // Ajouter des valeurs intermédiaires si l'écart est grand
+    if (maxY - minY > 50) {
+      const step = Math.round((maxY - minY) / 5); // Diviser l'intervalle en 5 parties
+      for (let i = 1; i < 5; i++) {
+        const intermediateValue = minY + step * i;
+        if (!enhancedYValues.includes(intermediateValue)) {
+          enhancedYValues.push(intermediateValue);
+        }
+      }
+      // Trier les valeurs
+      enhancedYValues.sort((a, b) => a - b);
+    }
+  }
 
   useEffect(() => {
     const fetchGraphData = async () => {
@@ -181,7 +206,7 @@ const CamProfileGraph: React.FC<CamProfileGraphProps> = ({
 
         const data = await calculationAPI.calculateCurves(
           formattedSegments,
-          500 // Resolution - number of points
+          500 // Revenir à 500 points
         );
 
         console.log('Received data from API:', data);
@@ -198,6 +223,29 @@ const CamProfileGraph: React.FC<CamProfileGraphProps> = ({
           x: Number(point.x)
         }));
 
+        // S'assurer que le dernier point est inclus et exactement à X2
+        if (formattedSegments.length > 0) {
+          const lastSegment = formattedSegments[formattedSegments.length - 1];
+          if (lastSegment) {
+            const lastX = Number(lastSegment.x2);
+            
+            // Supprimer tout point qui serait très proche du dernier point
+            const filteredData = formattedData.filter((p: CamValuePoint) => Math.abs(p.x - lastX) > 0.1);
+            
+            // Ajouter le point exact à la fin
+            filteredData.push({
+              x: lastX,
+              position: Number(lastSegment.y2),
+              velocity: Number(lastSegment.v2),
+              acceleration: Number(lastSegment.a2)
+            });
+            
+            // Remplacer les données formatées
+            formattedData.length = 0;
+            formattedData.push(...filteredData);
+          }
+        }
+
         console.log('Formatted data first point:', formattedData[0]);
         console.log('Formatted data last point:', formattedData[formattedData.length - 1]);
         console.log('Data range:', {
@@ -206,49 +254,37 @@ const CamProfileGraph: React.FC<CamProfileGraphProps> = ({
         });
 
         // Créer les points de transition pour chaque segment
-        const positionPoints = formattedSegments
+        const transitionPoints = formattedSegments
           .filter((segment): segment is NonNullable<typeof segment> => segment !== null)
           .slice(1) // Ignorer le premier segment car il n'a pas de point de transition
           .map(segment => ({
             x: Number(segment.x1),
             position: Number(segment.y1),
-            velocity: 0,
-            acceleration: 0,
-            isTransitionPoint: true
-          }));
-
-        const velocityPoints = formattedSegments
-          .filter((segment): segment is NonNullable<typeof segment> => segment !== null)
-          .slice(1)
-          .map(segment => ({
-            x: Number(segment.x1),
-            position: 0,
             velocity: Number(segment.v1),
-            acceleration: 0,
-            isTransitionPoint: true
-          }));
-
-        const accelerationPoints = formattedSegments
-          .filter((segment): segment is NonNullable<typeof segment> => segment !== null)
-          .slice(1)
-          .map(segment => ({
-            x: Number(segment.x1),
-            position: 0,
-            velocity: 0,
             acceleration: Number(segment.a1),
             isTransitionPoint: true
           }));
 
-        console.log('Transition points:', {
-          position: positionPoints,
-          velocity: velocityPoints,
-          acceleration: accelerationPoints
-        });
+        // Ajouter le point final du dernier segment comme point de transition
+        if (formattedSegments.length > 0) {
+          const lastSegment = formattedSegments[formattedSegments.length - 1];
+          if (lastSegment) {
+            transitionPoints.push({
+              x: Number(lastSegment.x2),
+              position: Number(lastSegment.y2),
+              velocity: Number(lastSegment.v2),
+              acceleration: Number(lastSegment.a2),
+              isTransitionPoint: true
+            });
+          }
+        }
+
+        console.log('Transition points:', transitionPoints);
 
         setTransitionPoints({
-          position: positionPoints,
-          velocity: velocityPoints,
-          acceleration: accelerationPoints
+          position: transitionPoints,
+          velocity: transitionPoints,
+          acceleration: transitionPoints
         });
 
         setGraphData(formattedData);
@@ -263,9 +299,84 @@ const CamProfileGraph: React.FC<CamProfileGraphProps> = ({
     `${segment.x1},${segment.y1},${segment.v1},${segment.a1},${segment.x2},${segment.y2},${segment.v2},${segment.a2},${segment.curveType}`
   ).join('|')]);
 
+  // Fonction utilitaire pour formater les nombres
+  const formatNumber = (value: number) => {
+    return Number.isInteger(value) ? value.toString() : value.toFixed(2);
+  };
+
   // Custom tooltip to display values at cursor position
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
+      // Vérifier si nous sommes sur un point de transition en comparant la valeur X
+      const xValue = Number(label);
+      
+      // Trouver si cette valeur X correspond à un point de transition
+      const isTransitionX = transitionXValues.some(x => Math.abs(x - xValue) < 0.001);
+      
+      if (isTransitionX && camProfile?.segments) {
+        // Chercher d'abord si c'est un point de début de segment (X1)
+        const startSegmentIndex = camProfile.segments.findIndex(
+          segment => Math.abs(Number(segment.x1) - xValue) < 0.001
+        );
+        
+        // Chercher ensuite si c'est un point de fin de segment (X2)
+        const endSegmentIndex = camProfile.segments.findIndex(
+          segment => Math.abs(Number(segment.x2) - xValue) < 0.001
+        );
+        
+        // Si c'est un point de début de segment
+        if (startSegmentIndex > 0) {
+          const segment = camProfile.segments[startSegmentIndex];
+          
+          return (
+            <Paper sx={{ p: 1, bgcolor: 'background.paper' }}>
+              <Typography variant="body2" sx={{ color: 'text.primary' }}>X: {formatNumber(xValue)}</Typography>
+              {showPosition && (
+                <Typography variant="body2" sx={{ color: '#FF3D00' }}>
+                  Position: {formatNumber(Number(segment.y1))}
+                </Typography>
+              )}
+              {showVelocity && (
+                <Typography variant="body2" sx={{ color: '#00FF9D' }}>
+                  Velocity: {formatNumber(Number(segment.v1))}
+                </Typography>
+              )}
+              {showAcceleration && (
+                <Typography variant="body2" sx={{ color: '#00B8FF' }}>
+                  Acceleration: {formatNumber(Number(segment.a1))}
+                </Typography>
+              )}
+            </Paper>
+          );
+        }
+        // Si c'est un point de fin de segment
+        else if (endSegmentIndex >= 0) {
+          const segment = camProfile.segments[endSegmentIndex];
+          
+          return (
+            <Paper sx={{ p: 1, bgcolor: 'background.paper' }}>
+              <Typography variant="body2" sx={{ color: 'text.primary' }}>X: {formatNumber(xValue)}</Typography>
+              {showPosition && (
+                <Typography variant="body2" sx={{ color: '#FF3D00' }}>
+                  Position: {formatNumber(Number(segment.y2))}
+                </Typography>
+              )}
+              {showVelocity && (
+                <Typography variant="body2" sx={{ color: '#00FF9D' }}>
+                  Velocity: {formatNumber(Number(segment.v2))}
+                </Typography>
+              )}
+              {showAcceleration && (
+                <Typography variant="body2" sx={{ color: '#00B8FF' }}>
+                  Acceleration: {formatNumber(Number(segment.a2))}
+                </Typography>
+              )}
+            </Paper>
+          );
+        }
+      }
+
+      // Pour les points normaux, utiliser le comportement existant
       // Créer une Map pour stocker les valeurs uniques
       const uniqueValues = new Map();
       
@@ -296,14 +407,14 @@ const CamProfileGraph: React.FC<CamProfileGraphProps> = ({
 
       return (
         <Paper sx={{ p: 1, bgcolor: 'background.paper' }}>
-          <Typography variant="body2" sx={{ color: 'text.primary' }}>X: {label}</Typography>
+          <Typography variant="body2" sx={{ color: 'text.primary' }}>X: {formatNumber(Number(label))}</Typography>
           {sortedEntries.map(([name, data]) => (
             <Typography
               key={name}
               variant="body2"
               sx={{ color: data.color }}
             >
-              {name}: {data.value.toFixed(4)}
+              {name}: {formatNumber(data.value)}
             </Typography>
           ))}
         </Paper>
@@ -402,10 +513,14 @@ const CamProfileGraph: React.FC<CamProfileGraphProps> = ({
                   style: { fontSize: '12px', fontWeight: 500 }
                 }}
                 tick={{ fill: '#F8F8F8' }}
-                tickFormatter={(value) => value.toFixed(2)}
-                domain={[minX, maxX]}
+                tickFormatter={(value) => {
+                  // Vérifier si le nombre a des décimales
+                  return Number.isInteger(value) ? value.toString() : value.toFixed(2);
+                }}
+                domain={[xDomainMin, xDomainMax]}
                 type="number"
                 allowDataOverflow={false}
+                ticks={transitionXValues}
               />
               {/* Position Y-Axis (left) */}
               {showPosition && (
@@ -421,46 +536,33 @@ const CamProfileGraph: React.FC<CamProfileGraphProps> = ({
                   }}
                   orientation="left"
                   tick={{ fill: '#F8F8F8' }}
+                  tickFormatter={(value) => {
+                    // Vérifier si le nombre a des décimales
+                    return Number.isInteger(value) ? value.toString() : value.toFixed(2);
+                  }}
                   domain={positionDomain}
                   hide={!showPosition}
+                  ticks={enhancedYValues}
                 />
               )}
-              {/* Velocity Y-Axis (right) */}
+              {/* Velocity Y-Axis (right) - masqué mais toujours présent pour le graphique */}
               {showVelocity && (
                 <YAxis
                   yAxisId="velocity"
                   stroke="#F8F8F8"
-                  label={{
-                    value: `Velocity (${camProfile?.slaveUnit || 'mm'}/${camProfile?.masterUnit || 'degrees'})`,
-                    angle: -90,
-                    position: 'insideRight',
-                    fill: '#F8F8F8',
-                    style: { fontSize: '12px', fontWeight: 500 }
-                  }}
                   orientation="right"
-                  tick={{ fill: '#F8F8F8' }}
                   domain={velocityDomain}
-                  hide={!showVelocity}
+                  hide={true}
                 />
               )}
-              {/* Acceleration Y-Axis (far right) */}
+              {/* Acceleration Y-Axis (far right) - masqué mais toujours présent pour le graphique */}
               {showAcceleration && (
                 <YAxis
                   yAxisId="acceleration"
                   stroke="#F8F8F8"
-                  label={{
-                    value: `Acceleration (${camProfile?.slaveUnit || 'mm'}/${camProfile?.masterUnit || 'degrees'}²)`,
-                    angle: -90,
-                    position: 'insideRight',
-                    offset: 40,
-                    fill: '#F8F8F8',
-                    style: { fontSize: '12px', fontWeight: 500 }
-                  }}
                   orientation="right"
-                  tick={{ fill: '#F8F8F8' }}
-                  tickFormatter={(value) => ''}
                   domain={accelerationDomain}
-                  hide={!showAcceleration}
+                  hide={true}
                 />
               )}
               <Tooltip 

@@ -118,21 +118,58 @@ const SegmentsTable: React.FC<SegmentsTableProps> = ({
       return;
     }
     
-    // Create a direct link between the parameter and the cell
-    if (camProfile && onLinkParameter) {
-      // First, notify the parent component about the linking
-      onLinkParameter(linkingSegmentIndex, linkingParameter);
+    // Vérifier si le paramètre est un paramètre de fin (x2, y2, v2, a2) et s'il y a un segment suivant
+    const isEndParameter = ['x2', 'y2', 'v2', 'a2'].includes(linkingParameter);
+    const hasNextSegment = camProfile && linkingSegmentIndex < camProfile.segments.length - 1;
+    
+    // Si c'est un paramètre de fin et qu'il y a un segment suivant, désactiver temporairement la propagation
+    if (isEndParameter && hasNextSegment && camProfile) {
+      // Désactiver temporairement la synchronisation
+      isUpdatingRef.current = true;
       
-      // Then, create a custom event to link the cell
-      const event = new CustomEvent('linkCell', {
-        detail: {
-          row: cellIndices.row,
-          col: cellIndices.col,
-          segmentIndex: linkingSegmentIndex,
-          parameter: linkingParameter
-        }
-      });
-      document.dispatchEvent(event);
+      // Stocker les valeurs actuelles du segment suivant
+      const nextSegmentIndex = linkingSegmentIndex + 1;
+      const nextSegment = camProfile.segments[nextSegmentIndex];
+      const startParameter = linkingParameter.replace('2', '1'); // Convertir x2 en x1, y2 en y1, etc.
+      
+      // Create a direct link between the parameter and the cell
+      if (onLinkParameter) {
+        // First, notify the parent component about the linking
+        onLinkParameter(linkingSegmentIndex, linkingParameter);
+        
+        // Then, create a custom event to link the cell
+        const event = new CustomEvent('linkCell', {
+          detail: {
+            row: cellIndices.row,
+            col: cellIndices.col,
+            segmentIndex: linkingSegmentIndex,
+            parameter: linkingParameter
+          }
+        });
+        document.dispatchEvent(event);
+      }
+      
+      // Réactiver la synchronisation après un court délai
+      setTimeout(() => {
+        isUpdatingRef.current = false;
+      }, 100);
+    } else {
+      // Create a direct link between the parameter and the cell
+      if (onLinkParameter) {
+        // First, notify the parent component about the linking
+        onLinkParameter(linkingSegmentIndex, linkingParameter);
+        
+        // Then, create a custom event to link the cell
+        const event = new CustomEvent('linkCell', {
+          detail: {
+            row: cellIndices.row,
+            col: cellIndices.col,
+            segmentIndex: linkingSegmentIndex,
+            parameter: linkingParameter
+          }
+        });
+        document.dispatchEvent(event);
+      }
     }
     
     // Close the dialog and reset the state
@@ -621,20 +658,20 @@ const SegmentsTable: React.FC<SegmentsTableProps> = ({
         ['x2', 'y2', 'v2', 'a2'].forEach(endParam => {
           const startParam = endParam.replace('2', '1'); // Convertir x2 en x1, y2 en y1, etc.
           
-          // Si le paramètre de fin du segment précédent est lié à une cellule
-          const isLinked = linkedParameters.some(lp => 
+          // Vérifier si le paramètre de fin du segment précédent est lié à une cellule
+          const isPrevEndLinked = linkedParameters.some(lp => 
             lp.segmentIndex === i - 1 && 
             lp.parameter === endParam
           );
 
-          // Si le paramètre de début du segment actuel n'est pas lié à une cellule
-          const isStartLinked = linkedParameters.some(lp => 
+          // Vérifier si le paramètre de début du segment actuel est lié à une cellule
+          const isCurrentStartLinked = linkedParameters.some(lp => 
             lp.segmentIndex === i && 
             lp.parameter === startParam
           );
 
-          // Si le paramètre de fin est lié ou si le paramètre de début n'est pas lié
-          if (isLinked || !isStartLinked) {
+          // Si le paramètre de début n'est pas lié à une cellule et que le paramètre de fin n'est pas lié
+          if (!isCurrentStartLinked && !isPrevEndLinked) {
             // Mettre à jour le paramètre de début avec la valeur du paramètre de fin du segment précédent
             if (currentSegment[startParam as keyof Segment] !== prevSegment[endParam as keyof Segment]) {
               updatedSegments[i] = {
@@ -681,61 +718,45 @@ const SegmentsTable: React.FC<SegmentsTableProps> = ({
     }
   }, [camProfile, linkedParameters]);
 
-  // Check if there are segments to display
-  const hasSegments = camProfile && camProfile.segments && camProfile.segments.length > 0;
-  
-  // Check if the segment editing should be disabled
-  const disableSegmentEditing = !isNewSegment && camProfile?.segments && camProfile.segments.length > 1;
-
   // Ajouter un effet pour écouter les changements de valeur des cellules liées
   useEffect(() => {
     const handleCellValueChange = (event: CustomEvent) => {
       const { row, col, value } = event.detail;
       
+      // Convertir les indices de la cellule en référence (ex: B2)
+      const cellRef = getCellReference(row, col);
+      
       // Trouver tous les paramètres liés à cette cellule
-      const linkedParams = linkedParameters.filter(lp => {
-        const cellRef = lp.cellReference;
-        if (!cellRef) return false;
-        
-        const cellIndices = parseCellReference(cellRef);
-        return cellIndices && cellIndices.row === row && cellIndices.col === col;
-      });
+      const linkedParams = linkedParameters.filter(lp => lp.cellReference === cellRef);
 
       // Pour chaque paramètre lié, mettre à jour sa valeur
       linkedParams.forEach(lp => {
         if (!camProfile || !camProfile.segments[lp.segmentIndex]) return;
 
-        // Mettre à jour le paramètre actuel
+        // Convertir la valeur en nombre
+        const numericValue = typeof value === 'string' ? parseFloat(value) : value;
+        if (isNaN(numericValue)) return;
+
+        // Créer une copie des segments
         const updatedSegments = [...camProfile.segments];
+        
+        // Mettre à jour uniquement le paramètre lié
         updatedSegments[lp.segmentIndex] = {
           ...updatedSegments[lp.segmentIndex],
-          [lp.parameter]: value
+          [lp.parameter]: numericValue
         };
 
-        // Si c'est un paramètre de fin (x2, y2, v2, a2) et qu'il y a un segment suivant
-        if (['x2', 'y2', 'v2', 'a2'].includes(lp.parameter) && lp.segmentIndex < updatedSegments.length - 1) {
-          const nextSegmentIndex = lp.segmentIndex + 1;
-          const nextParameter = lp.parameter.replace('2', '1'); // Convertir x2 en x1, y2 en y1, etc.
-          
-          // Forcer la mise à jour du paramètre du segment suivant avec la valeur du segment actuel
-          updatedSegments[nextSegmentIndex] = {
-            ...updatedSegments[nextSegmentIndex],
-            [nextParameter]: value
-          };
-
-          // Si le paramètre du segment suivant est lié à une cellule, mettre à jour cette cellule
-          const nextLinkedParam = linkedParameters.find(
-            nextLp => nextLp.segmentIndex === nextSegmentIndex && nextLp.parameter === nextParameter
-          );
-
-          if (nextLinkedParam && nextLinkedParam.cellReference) {
-            const event = new CustomEvent('updateLinkedCell', {
-              detail: {
-                cellReference: nextLinkedParam.cellReference,
-                value: value
-              }
-            });
-            document.dispatchEvent(event);
+        // Si c'est un segment linéaire et qu'on modifie x1, y1, x2 ou y2, recalculer v2
+        if (updatedSegments[lp.segmentIndex].curveType === 'Linear' && 
+            ['x1', 'y1', 'x2', 'y2'].includes(lp.parameter)) {
+          const segment = updatedSegments[lp.segmentIndex];
+          const deltaX = segment.x2 - segment.x1;
+          if (deltaX !== 0) {
+            const v2 = (segment.y2 - segment.y1) / deltaX;
+            updatedSegments[lp.segmentIndex] = {
+              ...segment,
+              v2: v2
+            };
           }
         }
 
@@ -749,31 +770,12 @@ const SegmentsTable: React.FC<SegmentsTableProps> = ({
         onProfileUpdate(updatedProfile);
 
         // Mettre à jour l'API si nécessaire
-        if (camProfile._id) {
-          try {
-            // Mettre à jour le segment actuel
-            if (updatedSegments[lp.segmentIndex]._id) {
-              camProfileAPI.updateSegment(
-                camProfile._id,
-                updatedSegments[lp.segmentIndex]._id || '',
-                updatedSegments[lp.segmentIndex]
-              );
-            }
-            
-            // Mettre à jour le segment suivant si nécessaire
-            if (['x2', 'y2', 'v2', 'a2'].includes(lp.parameter) && lp.segmentIndex < updatedSegments.length - 1) {
-              const nextSegmentIndex = lp.segmentIndex + 1;
-              if (updatedSegments[nextSegmentIndex]._id) {
-                camProfileAPI.updateSegment(
-                  camProfile._id,
-                  updatedSegments[nextSegmentIndex]._id || '',
-                  updatedSegments[nextSegmentIndex]
-                );
-              }
-            }
-          } catch (error) {
-            console.error('Error updating segment parameter:', error);
-          }
+        if (camProfile._id && updatedSegments[lp.segmentIndex]._id) {
+          camProfileAPI.updateSegment(
+            camProfile._id,
+            updatedSegments[lp.segmentIndex]._id || '',
+            updatedSegments[lp.segmentIndex]
+          );
         }
       });
     };
@@ -838,7 +840,7 @@ const SegmentsTable: React.FC<SegmentsTableProps> = ({
             </TableRow>
           </TableHead>
           <TableBody>
-            {hasSegments ? (
+            {camProfile && camProfile.segments && camProfile.segments.length > 0 ? (
               camProfile.segments.map((segment, index) => (
                 <TableRow key={index} sx={{ '&:hover': { bgcolor: '#1B254B' } }}>
                   <TableCell sx={{ py: 0.5 }}>{index + 1}</TableCell>
