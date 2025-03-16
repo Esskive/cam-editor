@@ -19,7 +19,7 @@ import { Link as LinkIcon, LinkOff as LinkOffIcon } from '@mui/icons-material';
 import Spreadsheet from 'react-spreadsheet';
 import { SpreadsheetCell, CamProfile, Segment, CellLink } from '../../types';
 import { camProfileAPI } from '../../services/api';
-import * as _ from 'lodash';
+import _ from 'lodash';
 
 interface LinkingInfo {
   active: boolean;

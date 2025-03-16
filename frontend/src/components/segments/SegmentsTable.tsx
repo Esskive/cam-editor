@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Box,
   Paper,
@@ -23,6 +23,7 @@ import {
   FormGroup,
   FormControl,
   Select,
+  Alert,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -62,7 +63,8 @@ const SegmentsTable: React.FC<SegmentsTableProps> = ({
   const [openDialog, setOpenDialog] = useState(false);
   const [editingSegment, setEditingSegment] = useState<Segment | null>(null);
   const [isNewSegment, setIsNewSegment] = useState(false);
-  const isUpdatingRef = React.useRef(false);
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const isUpdatingRef = useRef(false);
   
   // State for linking parameters to spreadsheet cells
   const [linkInfo, setLinkInfo] = useState<LinkInfo>({
@@ -254,6 +256,40 @@ const SegmentsTable: React.FC<SegmentsTableProps> = ({
     setEditingSegment(null);
   };
 
+  // Fonction pour valider la continuité entre deux segments
+  const validateContinuity = (prevSegment: Segment | undefined, currentSegment: Segment, nextSegment: Segment | undefined): string[] => {
+    const errors: string[] = [];
+    
+    // Vérifier la continuité avec le segment précédent
+    if (prevSegment) {
+      if (currentSegment.x1 !== prevSegment.x2) {
+        errors.push(`Position X1 (${currentSegment.x1}) doit être égale à X2 du segment précédent (${prevSegment.x2})`);
+      }
+      if (currentSegment.y1 !== prevSegment.y2) {
+        errors.push(`Position Y1 (${currentSegment.y1}) doit être égale à Y2 du segment précédent (${prevSegment.y2})`);
+      }
+      if (Math.abs(currentSegment.v1 - prevSegment.v2) > 0.0001) {
+        errors.push(`Vitesse V1 (${currentSegment.v1}) doit être égale à V2 du segment précédent (${prevSegment.v2})`);
+      }
+      if (Math.abs(currentSegment.a1 - prevSegment.a2) > 0.0001) {
+        errors.push(`Accélération A1 (${currentSegment.a1}) doit être égale à A2 du segment précédent (${prevSegment.a2})`);
+      }
+    }
+
+    // Si c'est un segment linéaire, vérifier que v2 correspond à la pente
+    if (currentSegment.curveType === 'Linear') {
+      const deltaX = currentSegment.x2 - currentSegment.x1;
+      if (deltaX !== 0) {
+        const expectedV2 = (currentSegment.y2 - currentSegment.y1) / deltaX;
+        if (Math.abs(currentSegment.v2 - expectedV2) > 0.0001) {
+          errors.push(`Pour un segment linéaire, V2 (${currentSegment.v2}) doit être égal à la pente (${expectedV2})`);
+        }
+      }
+    }
+
+    return errors;
+  };
+
   const handleSaveSegment = async () => {
     if (!camProfile || !editingSegment) {
       console.error('Cannot save segment: missing data', { camProfile, editingSegment });
@@ -262,8 +298,25 @@ const SegmentsTable: React.FC<SegmentsTableProps> = ({
 
     try {
       console.log('Saving segment:', editingSegment);
-      let updatedProfile;
+      
+      // Trouver l'index du segment en cours d'édition
+      const currentIndex = isNewSegment ? camProfile.segments.length : camProfile.segments.findIndex(s => s._id === editingSegment._id);
+      
+      // Obtenir les segments adjacents
+      const prevSegment = currentIndex > 0 ? camProfile.segments[currentIndex - 1] : undefined;
+      const nextSegment = !isNewSegment && currentIndex < camProfile.segments.length - 1 ? camProfile.segments[currentIndex + 1] : undefined;
+      
+      // Valider la continuité
+      const continuityErrors = validateContinuity(prevSegment, editingSegment, nextSegment);
+      
+      if (continuityErrors.length > 0) {
+        // Afficher les erreurs à l'utilisateur
+        setValidationErrors(continuityErrors);
+        return;
+      }
 
+      let updatedProfile;
+      
       // S'assurer que le segment a toutes les propriétés requises
       const segmentToSave: Segment = {
         ...editingSegment,
@@ -327,20 +380,88 @@ const SegmentsTable: React.FC<SegmentsTableProps> = ({
       const deltaX = Number(updatedSegment.x2) - Number(updatedSegment.x1);
       if (deltaX !== 0) {
         const v2 = (Number(updatedSegment.y2) - Number(updatedSegment.y1)) / deltaX;
-        setEditingSegment({
+        
+        // Mettre à jour le segment en cours avec la nouvelle valeur de v2
+        const segmentWithV2 = {
           ...updatedSegment,
           v2: v2
-        });
+        };
+        setEditingSegment(segmentWithV2);
+
+        // Si nous sommes en train de modifier un segment existant (pas un nouveau)
+        if (!isNewSegment && camProfile) {
+          // Trouver l'index du segment en cours d'édition
+          const currentIndex = camProfile.segments.findIndex(s => s._id === editingSegment._id);
+          
+          // S'il y a un segment suivant, mettre à jour ses valeurs initiales
+          if (currentIndex < camProfile.segments.length - 1) {
+            const nextSegment = camProfile.segments[currentIndex + 1];
+            
+            // Vérifier si les paramètres du segment suivant sont liés
+            const isNextV1Linked = linkedParameters.some(lp => 
+              lp.segmentIndex === currentIndex + 1 && 
+              lp.parameter === 'v1'
+            );
+            const isNextX1Linked = linkedParameters.some(lp => 
+              lp.segmentIndex === currentIndex + 1 && 
+              lp.parameter === 'x1'
+            );
+            const isNextY1Linked = linkedParameters.some(lp => 
+              lp.segmentIndex === currentIndex + 1 && 
+              lp.parameter === 'y1'
+            );
+
+            // Mettre à jour les valeurs du segment suivant si elles ne sont pas liées
+            if (!isNextX1Linked) {
+              updateSegmentParameter(currentIndex + 1, 'x1', segmentWithV2.x2);
+            }
+            if (!isNextY1Linked) {
+              updateSegmentParameter(currentIndex + 1, 'y1', segmentWithV2.y2);
+            }
+            if (!isNextV1Linked) {
+              updateSegmentParameter(currentIndex + 1, 'v1', v2);
+            }
+          }
+        }
       } else {
         setEditingSegment(updatedSegment);
       }
       return;
     }
 
-    setEditingSegment({
+    // Pour les autres paramètres
+    const updatedSegment = {
       ...editingSegment,
-      [field]: field === 'curveType' ? value : parseFloat(value),
-    });
+      [field]: field === 'curveType' ? value : parseFloat(value)
+    };
+    setEditingSegment(updatedSegment);
+
+    // Si nous modifions un paramètre de fin (x2, y2, v2) et que nous ne sommes pas en train de créer un nouveau segment
+    if (!isNewSegment && camProfile && ['x2', 'y2', 'v2'].includes(field)) {
+      // Trouver l'index du segment en cours d'édition
+      const currentIndex = camProfile.segments.findIndex(s => s._id === editingSegment._id);
+      
+      // S'il y a un segment suivant, mettre à jour le paramètre correspondant
+      if (currentIndex < camProfile.segments.length - 1) {
+        const parameterMap = {
+          'x2': 'x1',
+          'y2': 'y1',
+          'v2': 'v1'
+        };
+        const nextParameter = parameterMap[field as keyof typeof parameterMap];
+        
+        // Vérifier si le paramètre du segment suivant est lié
+        const isNextParamLinked = linkedParameters.some(lp => 
+          lp.segmentIndex === currentIndex + 1 && 
+          lp.parameter === nextParameter
+        );
+
+        // Si le paramètre n'est pas lié, le mettre à jour
+        if (!isNextParamLinked) {
+          updateSegmentParameter(currentIndex + 1, nextParameter, parseFloat(value));
+        }
+      }
+    }
   };
 
   const updateSegmentParameter = async (segmentIndex: number, parameter: string, value: number | string) => {
@@ -378,6 +499,31 @@ const SegmentsTable: React.FC<SegmentsTableProps> = ({
             ...updatedSegment,
             v2: v2
           };
+
+          // Si ce n'est pas le dernier segment, mettre à jour les valeurs initiales du segment suivant
+          if (segmentIndex < updatedSegments.length - 1) {
+            const nextSegment = updatedSegments[segmentIndex + 1];
+            const isNextV1Linked = linkedParameters.some(lp => 
+              lp.segmentIndex === segmentIndex + 1 && 
+              lp.parameter === 'v1'
+            );
+            const isNextX1Linked = linkedParameters.some(lp => 
+              lp.segmentIndex === segmentIndex + 1 && 
+              lp.parameter === 'x1'
+            );
+            const isNextY1Linked = linkedParameters.some(lp => 
+              lp.segmentIndex === segmentIndex + 1 && 
+              lp.parameter === 'y1'
+            );
+
+            // Mettre à jour les valeurs du segment suivant si elles ne sont pas liées
+            updatedSegments[segmentIndex + 1] = {
+              ...nextSegment,
+              x1: isNextX1Linked ? nextSegment.x1 : updatedSegments[segmentIndex].x2,
+              y1: isNextY1Linked ? nextSegment.y1 : updatedSegments[segmentIndex].y2,
+              v1: isNextV1Linked ? nextSegment.v1 : v2
+            };
+          }
         } else {
           updatedSegments[segmentIndex] = updatedSegment;
         }
@@ -387,29 +533,31 @@ const SegmentsTable: React.FC<SegmentsTableProps> = ({
           ...currentSegment,
           [parameter]: value
         };
-      }
 
-      // Si c'est un paramètre de fin (x2, y2, v2, a2) et qu'il y a un segment suivant
-      if (['x2', 'y2', 'v2', 'a2'].includes(parameter) && segmentIndex < updatedSegments.length - 1) {
-        // Mettre à jour le paramètre correspondant du segment suivant
-        const nextSegmentIndex = segmentIndex + 1;
-        const nextParameter = parameter.replace('2', '1'); // Convertir x2 en x1, y2 en y1, etc.
-        
-        // Vérifier si le paramètre du segment suivant est lié à une cellule
-        const isNextLinked = linkedParameters.some(lp => 
-          lp.segmentIndex === nextSegmentIndex && 
-          lp.parameter === nextParameter
-        );
-
-        // Si le paramètre du segment suivant n'est pas lié, le mettre à jour
-        if (!isNextLinked) {
-          updatedSegments[nextSegmentIndex] = {
-            ...updatedSegments[nextSegmentIndex],
-            [nextParameter]: value
+        // Si on modifie un paramètre de fin (x2, y2, v2), propager au début du segment suivant
+        if (['x2', 'y2', 'v2'].includes(parameter) && segmentIndex < updatedSegments.length - 1) {
+          const nextSegment = updatedSegments[segmentIndex + 1];
+          const parameterMap = {
+            'x2': 'x1',
+            'y2': 'y1',
+            'v2': 'v1'
           };
+          const nextParameter = parameterMap[parameter as keyof typeof parameterMap];
+          
+          const isNextParamLinked = linkedParameters.some(lp => 
+            lp.segmentIndex === segmentIndex + 1 && 
+            lp.parameter === nextParameter
+          );
+
+          if (!isNextParamLinked) {
+            updatedSegments[segmentIndex + 1] = {
+              ...nextSegment,
+              [nextParameter]: typeof value === 'string' ? parseFloat(value) : value
+            };
+          }
         }
       }
-      
+
       // Create an updated profile
       const updatedProfile = {
         ...camProfile,
@@ -432,7 +580,7 @@ const SegmentsTable: React.FC<SegmentsTableProps> = ({
           }
           
           // Mettre à jour le segment suivant si nécessaire
-          if (['x2', 'y2', 'v2', 'a2'].includes(parameter) && segmentIndex < updatedSegments.length - 1) {
+          if (segmentIndex < updatedSegments.length - 1) {
             const nextSegmentIndex = segmentIndex + 1;
             if (updatedSegments[nextSegmentIndex]._id) {
               await camProfileAPI.updateSegment(
@@ -447,7 +595,10 @@ const SegmentsTable: React.FC<SegmentsTableProps> = ({
         }
       }
     } finally {
-      isUpdatingRef.current = false;
+      // Réactiver la synchronisation après un court délai
+      setTimeout(() => {
+        isUpdatingRef.current = false;
+      }, 100);
     }
   };
 
@@ -658,6 +809,16 @@ const SegmentsTable: React.FC<SegmentsTableProps> = ({
           Add Segment
         </Button>
       </Paper>
+
+      {validationErrors.length > 0 && (
+        <Box sx={{ mb: 2 }}>
+          {validationErrors.map((error, index) => (
+            <Alert key={index} severity="error" onClose={() => setValidationErrors([])} sx={{ mb: 1 }}>
+              {error}
+            </Alert>
+          ))}
+        </Box>
+      )}
 
       <TableContainer component={Paper} sx={{ flexGrow: 1, overflow: 'auto', bgcolor: '#111C44' }}>
         <Table stickyHeader aria-label="segments table">
