@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Router } from 'express';
 import {
   getAllCamProfiles,
   getCamProfileById,
@@ -11,21 +11,21 @@ import {
   updateSpreadsheetData
 } from '../controllers/camProfileController';
 
-const router = express.Router();
+const router: Router = express.Router();
 
 // Cam profile routes
-router.get('/', getAllCamProfiles);
-router.get('/:id', getCamProfileById);
-router.post('/', createCamProfile);
-router.put('/:id', updateCamProfile);
-router.delete('/:id', deleteCamProfile);
+router.get('/', getAllCamProfiles as any);
+router.get('/:id', getCamProfileById as any);
+router.post('/', createCamProfile as any);
+router.put('/:id', updateCamProfile as any);
+router.delete('/:id', deleteCamProfile as any);
 
 // Segment routes
-router.post('/:id/segments', addSegment);
-router.put('/:id/segments/:segmentId', updateSegment);
-router.delete('/:id/segments/:segmentId', deleteSegment);
+router.post('/:id/segments', addSegment as any);
+router.put('/:id/segments/:segmentId', updateSegment as any);
+router.delete('/:id/segments/:segmentId', deleteSegment as any);
 
 // Spreadsheet data route
-router.put('/:id/spreadsheet', updateSpreadsheetData);
+router.put('/:id/spreadsheet', updateSpreadsheetData as any);
 
 export default router;

@@ -30,9 +30,10 @@ app.use('/api/cam-profiles', camProfileRoutes);
 app.use('/api/calculations', calculationRoutes);
 
 // Basic route
-app.get('/api', (req: Request, res: Response) => {
+const apiHandler = (req: Request, res: Response): void => {
   res.json({ message: 'Welcome to Cam Editor API' });
-});
+};
+app.get('/api', apiHandler as any);
 
 // Start server
 app.listen(PORT, () => {

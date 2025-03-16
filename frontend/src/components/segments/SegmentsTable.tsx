@@ -1015,18 +1015,20 @@ const SegmentsTable: React.FC<SegmentsTableProps> = ({
                       <Tooltip title={linkedParameters.some(lp => lp.segmentIndex === index && lp.parameter === 'v2') 
                         ? `Délier de la cellule ${linkedParameters.find(lp => lp.segmentIndex === index && lp.parameter === 'v2')?.cellReference}`
                         : segment.curveType === 'Linear' ? "Calculé automatiquement pour les segments linéaires" : "Lier à une cellule"}>
-                        <IconButton
-                          size="small"
-                          onClick={() => linkedParameters.some(lp => lp.segmentIndex === index && lp.parameter === 'v2')
-                            ? handleUnlinkParameter(index, 'v2')
-                            : handleStartLinking(index, 'v2')}
-                          sx={{ ml: 1 }}
-                          disabled={segment.curveType === 'Linear'}
-                        >
-                          {linkedParameters.some(lp => lp.segmentIndex === index && lp.parameter === 'v2')
-                            ? <LinkIcon fontSize="small" color="primary" />
-                            : <LinkOffIcon fontSize="small" />}
-                        </IconButton>
+                        <span>
+                          <IconButton
+                            size="small"
+                            onClick={() => linkedParameters.some(lp => lp.segmentIndex === index && lp.parameter === 'v2')
+                              ? handleUnlinkParameter(index, 'v2')
+                              : handleStartLinking(index, 'v2')}
+                            sx={{ ml: 1 }}
+                            disabled={segment.curveType === 'Linear'}
+                          >
+                            {linkedParameters.some(lp => lp.segmentIndex === index && lp.parameter === 'v2')
+                              ? <LinkIcon fontSize="small" color="primary" />
+                              : <LinkOffIcon fontSize="small" />}
+                          </IconButton>
+                        </span>
                       </Tooltip>
                     </Box>
                   </TableCell>

@@ -95,6 +95,17 @@ export const addSegment = async (req: Request, res: Response) => {
       return res.status(404).json({ message: 'Cam profile not found' });
     }
     
+    // Vérifier s'il y a des segments existants pour assurer la continuité
+    if (camProfile.segments && camProfile.segments.length > 0) {
+      const lastSegment = camProfile.segments[camProfile.segments.length - 1];
+      
+      // Assurer la continuité avec le dernier segment
+      req.body.x1 = lastSegment.x2;
+      req.body.y1 = lastSegment.y2;
+      req.body.v1 = lastSegment.v2;
+      req.body.a1 = lastSegment.a2;
+    }
+    
     const newSegment = {
       _id: uuidv4(),
       ...req.body
@@ -127,10 +138,23 @@ export const updateSegment = async (req: Request, res: Response) => {
       return res.status(404).json({ message: 'Segment not found' });
     }
     
+    // Mettre à jour le segment
     camProfile.segments[segmentIndex] = {
       ...camProfile.segments[segmentIndex],
       ...req.body
     };
+    
+    // Maintenir la continuité avec le segment suivant si nécessaire
+    if (segmentIndex < camProfile.segments.length - 1) {
+      const currentSegment = camProfile.segments[segmentIndex];
+      const nextSegment = camProfile.segments[segmentIndex + 1];
+      
+      // Mettre à jour les valeurs initiales du segment suivant
+      nextSegment.x1 = currentSegment.x2;
+      nextSegment.y1 = currentSegment.y2;
+      nextSegment.v1 = currentSegment.v2;
+      nextSegment.a1 = currentSegment.a2;
+    }
     
     camProfile.updatedAt = new Date();
     
